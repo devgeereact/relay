@@ -16,7 +16,7 @@
  * It is the mirror of `timers::project_both` in Rust: one rule, stated once on
  * each side of the bridge and never twice on one.
  */
-import { countdownRemainingMs } from './countdown.js';
+import { countdownRemainingMs, countdownIsPaused } from './countdown.js';
 
 /**
  * The STAGE TIMERS — the preacher's monitor — and nothing else.
@@ -67,6 +67,22 @@ export function timerAsContent(t) {
  * message, and a negative would never reach that branch. One rule, two honest
  * readings, and the caller says which it is asking for.
  */
+/**
+ * Is this registry timer being HELD?
+ *
+ * Through `timerAsContent`, so it is the same projection and the same reader
+ * every other figure on this path goes through — `countdownIsPaused` is the one
+ * answer to this question and a second `paused_ms != null` here would be a
+ * surface that disagrees with the rail about whether a clock is frozen.
+ *
+ * A held figure is SIGNED as of RG-175: a sermon two minutes over holds at
+ * `-120000`, which is `+2:00` on the rail. Anything testing `> 0` for held-ness
+ * is the bug that made the hold impossible to express.
+ */
+export function timerIsHeld(t) {
+  return countdownIsPaused(timerAsContent(t));
+}
+
 export function timerRemainingMs(t, nowMs, { past = false } = {}) {
   if (!t) return null;
   return countdownRemainingMs(timerAsContent(t), nowMs, { past });

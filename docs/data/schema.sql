@@ -77,7 +77,13 @@ CREATE TABLE output_channels (
     -- the behaviour every install had before this column, and is why there is no
     -- back-fill. NULL and [] are deliberately different: the first shows
     -- everything the template does, the second shows nothing.
-    shows_json     TEXT
+    shows_json     TEXT,
+    -- WHICH STAGE LAYOUT THIS SCREEN WEARS (db/stage.rs). NULL is a real answer
+    -- and the way back: the device's own localStorage zones still apply, which
+    -- is what stops this column silently erasing an arrangement a church is
+    -- already using. Assigning one is the deliberate act that takes the
+    -- decision off the device.
+    stage_layout_id INTEGER REFERENCES stage_layouts(id)
 );
 
 -- WHAT ONE SCREEN WEARS FOR ONE KIND OF CONTENT (db/channels.rs).
@@ -100,6 +106,30 @@ CREATE TABLE channel_looks (
     kind        TEXT    NOT NULL,         -- one of CONTENT_KINDS (src/lib/layers.js)
     template_id INTEGER NOT NULL REFERENCES templates(id),
     PRIMARY KEY (channel_id, kind)
+);
+
+-- WHAT A PREACHER'S SCREEN SHOWS (db/stage.rs).
+--
+-- A layout is GLOBAL and its assignment is PER SCREEN, which is ProPresenter's
+-- own shape: one list you edit, and each stage screen pointed at one entry.
+--
+-- It is deliberately not a row in templates. A template carries regions, a
+-- style and a TemplateRender output; a stage layout carries none of those,
+-- because stage.html is a hand-drawn monitor rather than a render target. One
+-- table holding both would be two kinds of thing rendered by two renderers, and
+-- the Templates gallery would show a layout as a broken visual template.
+--
+-- zones_json rather than a column per zone, for rule 25's reason: the zone list
+-- has already grown once, and DDL would be the least editable mirror of it.
+--
+-- seed_key is what a starter IS, independent of what it is called. Seeding by
+-- name re-creates a renamed starter beside itself on every launch; templates
+-- already carries this column for the identical reason.
+CREATE TABLE stage_layouts (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    zones_json TEXT NOT NULL,          -- the zone switches, as Stage.svelte's own keys
+    seed_key   TEXT UNIQUE             -- NULL for a layout the operator made
 );
 
 -- ===== Service plans & the unified cue (db/plans.rs) =====
@@ -132,9 +162,16 @@ CREATE TABLE plan_items (
     section_title TEXT NOT NULL DEFAULT '',  -- non-empty = this cue BEGINS a section
     duration_sec  INTEGER NOT NULL DEFAULT 0, -- planned length, for the running-time
                                               -- estimate only (plan.js). 0 = untimed.
-    timer_minutes INTEGER                     -- a programme clock this cue asks Live to
+    timer_minutes INTEGER,                    -- a programme clock this cue asks Live to
                                               -- start when it goes on air. NULL = unbound,
                                               -- which is NOT the same as 0. See PlanItem.
+    -- WHICH SCREENS THIS CUE IS FOR (RG-161) -- a JSON array of channel ids.
+    -- NULL is EVERY screen, and is what every cue written before targeting
+    -- existed has, so a plan that has never been told about screens behaves
+    -- exactly as it always did. An empty array reaches NO screen, which is a
+    -- different thing and a real thing to ask for.
+    -- A screen a cue does not name is UNTOUCHED, not cleared.
+    channels_json TEXT
 );
 CREATE INDEX idx_plan_items ON plan_items(plan_id, position);
 

@@ -92,8 +92,8 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"   # relaunch after an update is installed
 # Hardware Check (Launch & Startup). Memory and disk headroom cannot be read from
 # std on both Windows and macOS without per-platform FFI. Minimal features: the
-# system and disk readers only — no processes, no networks, no components. Relay
-# reads totals and free space; it does not enumerate what else is running.
+# system, disk and network interface readers, no processes or components. Relay
+# reads totals, free space and local addresses; it does not enumerate running apps.
 #
 # **>= 0.39 IS A CORRECTNESS FLOOR, NOT A PREFERENCE.** On 0.32,
 # `System::available_memory()` returns **0 on macOS** — silently, with no error.
@@ -103,7 +103,7 @@ tauri-plugin-process = "2"   # relaunch after an update is installed
 # so it reported 674 MB on the same machine that had 12.3 GB genuinely available.
 # Caught by `sysprobe::tests::print_hardware`, which is exactly why that test
 # exists. Do not relax this bound without re-running it on macOS.
-sysinfo = { version = "0.39", default-features = false, features = ["system", "disk"] }
+sysinfo = { version = "0.39", default-features = false, features = ["system", "disk", "network"] }
 rust-stemmers = "1.2.0"
 
 # THE DISPLAY'S REAL NAME, on macOS.

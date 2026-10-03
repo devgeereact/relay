@@ -78,6 +78,7 @@ describe('the store invents no words for a caller that supplies none', () => {
       doneMsg: '',
       templateId: null,
       warnMs: null,
+      untilMs: null,
     });
   });
 
@@ -92,6 +93,7 @@ describe('the store invents no words for a caller that supplies none', () => {
       doneMsg: 'Please come in',
       templateId: 7,
       warnMs: null,
+      untilMs: null,
     });
   });
 });

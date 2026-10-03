@@ -200,6 +200,7 @@
     listTimers,
     stopTimer,
     adjustTimer,
+    resetTimer,
     countdownWarnMs,
     rehearsing,
     loadRehearsal,
@@ -211,7 +212,9 @@
   // The Stage Timer's two pure questions — which rows belong here, and how
   // long is left on one. `timerRemainingMs` ENDS in `countdownRemainingMs`, which
   // stays the only countdown arithmetic on this side of the bridge.
-  import { stageTimers, timerRemainingMs } from '../timers.js';
+  import { stageTimers, timerRemainingMs, timerIsHeld } from '../timers.js';
+  import { planChannelsOf } from '../plan.js';
+  import { atClockTime } from '../countdown.js';
 
   // ── the plan being RUN (not edited) ──────────────────────────────────────
   let plans = [];
@@ -548,8 +551,24 @@
       // `start_timer` creates the timer and publishes nothing. Putting a clock in
       // front of a congregation is `startCountdown` or `showTimer`, and neither is
       // reachable from here on purpose.
-      await startTimer({ minutes: Number(ptMins), label: ptName.trim(), scope: 'stage' });
+      // A LENGTH OR AN APPOINTMENT (DECISIONS §102). "Twenty minutes" and "be
+      // off at 11:15" are both things an operator wants from a sermon clock, and
+      // until now only the first could be said — every creator took minutes, so
+      // a time of day was arithmetic somebody did in their head and got wrong
+      // the moment the service slipped.
+      //
+      // The instant is worked out HERE because this is where the machine's
+      // timezone and DST rules are known. A time already gone is kept, so the
+      // clock starts over and the typo is visible immediately.
+      const at = ptUntil.trim() ? atClockTime(ptUntil) : null;
+      await startTimer({
+        minutes: Number(ptMins),
+        label: ptName.trim(),
+        scope: 'stage',
+        untilMs: at,
+      });
       ptName = '';
+      ptUntil = '';
       await loadProgrammeTimers();
     } catch (e) {
       ptErr = humanError(e);
@@ -568,6 +587,12 @@
     }
     ptBusy = false;
   }
+
+  /** A clock time to aim at, as typed. Empty means this is a length, not an appointment. */
+  let ptUntil = '';
+  /** Does what is typed name a real time? Null both for empty and for nonsense. */
+  $: ptUntilAt = ptUntil.trim() ? atClockTime(ptUntil) : null;
+  $: ptUntilBad = ptUntil.trim().length > 0 && ptUntilAt === null;
 
   /** One grant. Five minutes, because that is the unit a sermon is extended in. */
   const PT_GRANT_MS = 5 * 60_000;
@@ -593,6 +618,46 @@
   // It publishes nothing, because `adjust_timer` publishes nothing to a
   // congregation: a Stage Timer has no wire form on a wall, and the stage tablet
   // is told through `publish_timers`, unconditionally, on the Rust side.
+  // HOLD AND LET GO. The third answer to a clock that has run out, beside Stop
+  // (which throws the figure away) and `+5` (which re-aims it).
+  //
+  // IT NAMES NO FIGURE, DELIBERATELY. `adjust_timer` reads the clock itself when
+  // `remainingMs` is absent, and that is the whole repair: the reading available
+  // on this side is clamped at zero, and the engine refuses a REQUESTED length
+  // under a second as `TooShort` — so a hold computed here would be refused at
+  // exactly the moment an operator wants it. A request and a reading are not the
+  // same thing, and only the engine can take the reading.
+  async function holdProgrammeTimer(row) {
+    ptBusy = true;
+    ptErr = '';
+    try {
+      await adjustTimer(row.id, { paused: !row.held });
+      await loadProgrammeTimers();
+    } catch (e) {
+      ptErr = humanError(e);
+    }
+    ptBusy = false;
+  }
+
+  // START THAT AGAIN. Not Stop-then-Start, which throws away the label, the
+  // chosen warning threshold and the cue binding along with the figure — and
+  // not `+5`, which adds to whatever is there.
+  //
+  // It names no figure: the configured length lives on the registry row,
+  // because a re-aim moves `target_ms` and leaves `from_ms`, so nothing on this
+  // side can reconstruct what was originally chosen.
+  async function resetProgrammeTimer(row) {
+    ptBusy = true;
+    ptErr = '';
+    try {
+      await resetTimer(row.id);
+      await loadProgrammeTimers();
+    } catch (e) {
+      ptErr = humanError(e);
+    }
+    ptBusy = false;
+  }
+
   async function grantProgrammeTimer(row) {
     ptBusy = true;
     ptErr = '';
@@ -634,6 +699,11 @@
       label: (t.label ?? '').trim(),
       left,
       over: left != null && left <= 0,
+      // HELD IS A THIRD STATE, not the absence of running (RG-175). A held row
+      // is frozen at the figure it was holding, including past zero — which is
+      // the case the hold exists for, because the elapsed figure a preacher has
+      // been reading is the thing Stop throws away and `+5` re-aims.
+      held: timerIsHeld(t),
     };
   });
 
@@ -833,13 +903,18 @@
     // fire so a plan item renders with its own chosen look, not just the
     // content-type default. null → the backend falls back to that default.
     const tpl = item.template_id ?? null;
+    // WHICH SCREENS THIS CUE IS FOR (RG-161). Stored on the cue in the Planner;
+    // `null` — which is every cue written before targeting existed — means
+    // every screen, exactly as before. A screen this does not name is left
+    // showing whatever it already had.
+    const cueChannels = planChannelsOf(item.channels_json);
     try {
       if (item.cue_type === 'scripture') {
         // keepPlan: TRUE — this is a plan slide, so the transport must stay in
         // Slide mode. Without it, manualFire's leavePlan() flipped us to Verse
         // mode the moment a scripture cue fired, and the next → walked the passage
         // instead of advancing the plan. That was the Slide-mode bug.
-        await manualFire(p.reference || item.label, stageNote, tpl, true);
+        await manualFire(p.reference || item.label, stageNote, tpl, true, cueChannels);
       } else if (item.cue_type === 'media') {
         if (!p.media_id) {
           flash('Media asset missing — re-add it from the Library.');
@@ -870,9 +945,9 @@
         // service record then had nothing to say about which song was on screen,
         // and the Library's own fire (which passes the label) disagreed with this
         // one about the same rule.
-        await fireContent(item.label, s.text, 'song', stageNote, tpl, true); // keepPlan
+        await fireContent(item.label, s.text, 'song', stageNote, tpl, true, cueChannels); // keepPlan
       } else {
-        await fireContent(item.label, s.text, 'announce', stageNote, tpl, true); // keepPlan
+        await fireContent(item.label, s.text, 'announce', stageNote, tpl, true, cueChannels); // keepPlan
       }
       // Mark the cue live ONLY after the fire resolves. Setting onAir before the
       // await meant a failed fire left this cue amber "On Air" — and the reactive
@@ -2229,6 +2304,23 @@
       bind:value={ptMins}
       aria-label="Stage Timer minutes" />
     <span class="pt-unit">min</span>
+    <!-- OR AN APPOINTMENT. Empty means the minutes beside it; a time here wins.
+         `type="text"` rather than `type="time"`: the native picker is a
+         different interaction on every platform and this is a control an
+         operator uses once, under pressure, with a mouse already moving. -->
+    <span class="pt-unit">or at</span>
+    <input
+      class="r-input pt-at"
+      class:bad={ptUntilBad}
+      type="text"
+      bind:value={ptUntil}
+      placeholder="10:30"
+      inputmode="numeric"
+      autocomplete="off"
+      aria-label="Stage Timer clock time"
+      aria-invalid={ptUntilBad}
+      title="A time of day to count down to, like 10:30. Leave it empty to use the minutes beside it."
+      on:keydown={(e) => e.key === 'Enter' && !ptUntilBad && startProgrammeTimer()} />
     <input
       class="r-input pt-name-in"
       type="text"
@@ -2240,7 +2332,7 @@
     <button
       class="r-btn sm primary"
       on:click={startProgrammeTimer}
-      disabled={ptBusy || !$capture.available || !(Number(ptMins) > 0)}
+      disabled={ptBusy || !$capture.available || ptUntilBad || !(Number(ptMins) > 0 || ptUntilAt !== null)}
       title="Start a clock for the preacher's monitor. It puts nothing on a congregation screen."
       >Start timer</button>
     <!-- WHERE IT WOULD GO. One line, beside the control that starts it, in the
@@ -2274,18 +2366,42 @@
                rehearsal, red is a failure, and a sermon running long is none of
                the four. It is also the half a colour cannot say out loud to an
                operator glancing down for a tenth of a second. -->
-          <span class="pt-fig r-mono" class:over={t.over}
+          <span class="pt-fig r-mono" class:over={t.over} class:pt-held={t.held}
             >{#if t.left == null}no deadline{:else if t.over}+{formatCountdown(-t.left)} over{:else}{formatCountdown(t.left)}{/if}</span>
+          <!-- A FROZEN FIGURE HAS TO SAY SO. Without the word, a held clock and a
+               clock nobody is looking at read identically for as long as the
+               operator does not stare at the digits — and the rail on the
+               preacher's tablet already says `Held`, so the two surfaces would
+               disagree about the same timer. Words, not a colour: none of the
+               four law colours means "paused". -->
+          {#if t.held}<span class="pt-state">held</span>{/if}
           <!-- FIVE MORE MINUTES. The one thing an operator wants from a sermon
                clock and the only rendered door to `adjust_timer`, which was a
                registered command no control could reach. See `grantProgrammeTimer`
                for what it means on a clock that has already run out. -->
           <button
             class="r-btn sm ghost"
+            on:click={() => holdProgrammeTimer(t)}
+            disabled={ptBusy}
+            aria-label={t.label
+              ? `${t.held ? 'Resume' : 'Hold'} ${t.label}`
+              : `${t.held ? 'Resume' : 'Hold'} this timer`}
+            title={t.held
+              ? 'Let this timer carry on from where it was held. It touches no screen.'
+              : 'Freeze this timer at the figure it is showing, including past zero. It touches no screen.'}
+            >{t.held ? 'Resume' : 'Hold'}</button>
+          <button
+            class="r-btn sm ghost"
             on:click={() => grantProgrammeTimer(t)}
             disabled={ptBusy}
             aria-label={t.label ? `Give ${t.label} five more minutes` : 'Give this timer five more minutes'}
             title="Add five minutes to this timer. Past zero it grants five minutes from now. It touches no screen.">+5</button>
+          <button
+            class="r-btn sm ghost"
+            on:click={() => resetProgrammeTimer(t)}
+            disabled={ptBusy}
+            aria-label={t.label ? `Reset ${t.label}` : 'Reset this timer'}
+            title="Put this timer back to the length it was started at. It keeps its name and stays held if it is held. It touches no screen.">Reset</button>
           <button
             class="r-btn sm ghost"
             on:click={() => stopProgrammeTimer(t.id)}
@@ -2982,6 +3098,17 @@
      THAT page is the preacher's own bookkeeping, and on a console red means
      something has failed. Nothing has failed when a sermon runs long. */
   .pt-fig.over{color:var(--v-txt); font-weight:600}
+  /* A HELD FIGURE IS DIMMED AND NEVER COLOURED. `.over` is body ink because a
+     sermon running long is a fact the operator must read; holding it is a thing
+     they did on purpose, so it recedes. No law colour either way — amber is ON
+     AIR, cyan a guess, amethyst rehearsal, red a failure, and neither "over" nor
+     "held" is any of the four. The word beside it carries the meaning, which is
+     also the half a colour cannot say to somebody glancing down. */
+  .pt-at{flex:0 0 70px; min-width:0}
+  .pt-at.bad{border-color:var(--v-red-line)}
+  .pt-fig.pt-held{color:var(--v-dim); font-weight:600}
+  .pt-state{flex:0 0 auto; font-size:var(--v-fs-cap); color:var(--v-dim);
+    text-transform:uppercase; letter-spacing:var(--v-tr-h2)}
   .pt-chip > :global(button){flex:0 0 auto}
   .pt-cap{flex:0 0 auto; font-family:var(--f-mono); font-size:var(--v-fs-cap);
     letter-spacing:var(--v-tr-caps); color:var(--v-faint)}

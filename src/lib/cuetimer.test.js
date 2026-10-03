@@ -319,7 +319,10 @@ describe('the wiring, read off the source', () => {
     // The other is the operator pressing Start timer, which publishes nothing to a
     // congregation — `startCountdown` and `showTimer` are the controls that do, and
     // neither is reachable from that handler on purpose.
-    expect(live).toMatch(/await startTimer\(\{ minutes: Number\(ptMins\)/);
+    // The call is multi-line since it gained `untilMs` (DECISIONS §102), so this
+    // spans rather than assuming one line — it still names the argument that
+    // identifies this caller, which is what the check is for.
+    expect(live).toMatch(/await startTimer\(\{[\s\S]{0,200}?minutes: Number\(ptMins\)/);
     expect([...live.matchAll(/startCueTimer\(/g)]).toHaveLength(2); // the definition, and its one caller
     const body = live.slice(live.indexOf('async function fireSlide('), live.indexOf('async function startCueTimer('));
     expect(body).toMatch(/await startCueTimer\(item, cueWasOnAir\);/);

@@ -31,11 +31,15 @@ use super::*;
 /// Seven routes. If this fails, someone widened an unauthenticated control
 /// plane and the decision record has to be re-read before it merges.
 #[test]
-fn the_lan_remote_answers_exactly_seven_routes_and_refuses_the_rest() {
+fn the_lan_remote_answers_exactly_eight_routes_and_refuses_the_rest() {
     let app = bare_app();
     let h = app.handle().clone();
 
-    for route in [
+    // THE SIZE OF THE UNAUTHENTICATED SURFACE IS THE POINT (DECISIONS §35), so
+    // the count is asserted rather than left in the test's name to drift. It
+    // was seven until `stage_zones` (RG-161's sibling, DECISIONS §103); the
+    // name said seven for exactly as long as it took to notice.
+    const DECIDED: &[&str] = &[
         "search?q=john",
         "fire?ref=John 3:16",
         "next",
@@ -43,11 +47,43 @@ fn the_lan_remote_answers_exactly_seven_routes_and_refuses_the_rest() {
         "clear",
         "black",
         "live",
-    ] {
+        "stage_zones",
+    ];
+    assert_eq!(
+        DECIDED.len(),
+        8,
+        "the LAN control plane changed size. DECISIONS §35 owns the no-auth call \
+         and the exact surface it applies to — re-read it, then update this \
+         number and the test's own name together."
+    );
+    for route in DECIDED {
+        let route = *route;
         let body = super::remote_api(&h, super::remote_verb(route), route).body;
         assert!(
             !body.contains(r#""error":"unknown""#),
             "route {route:?} is part of the decided surface and stopped answering: {body}"
+        );
+        // AND THE BODY IS ACTUALLY JSON, WITH AN `ok`.
+        //
+        // This list checked that a route still ANSWERED and never that the
+        // answer could be read. `stage_zones` shipped returning the fragment
+        // `"zones":{}` — no braces, not JSON — because `ok` sets the body
+        // verbatim and every arm has to build its own whole object. Nothing
+        // caught it: the Rust tests only looked for the unknown-route string,
+        // and the frontend tests mock `fetch`. It was found by curling the
+        // packaged app.
+        //
+        // The cost of that shape is silence, which is why it needs a test
+        // rather than care: `Stage.svelte`'s `api()` calls `r.json()`, that
+        // throws, `loadStageZones` swallows it by design, and the page falls
+        // back to the device's own zones — so an assigned stage layout would
+        // never apply and nothing anywhere would say why.
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap_or_else(|e| {
+            panic!("route {route:?} answered something that is not JSON ({e}): {body}")
+        });
+        assert!(
+            v.get("ok").and_then(|o| o.as_bool()).is_some(),
+            "route {route:?} answered JSON with no `ok` for a caller to check: {body}"
         );
     }
 

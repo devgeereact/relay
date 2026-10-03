@@ -10,6 +10,103 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### Connecting the preacher's phone
+
+When Relay cannot find a local network address, Sharing now explains the problem
+instead of offering a stage link that points back at the phone itself. The stage
+QR code is larger, has a wider white border, and reports generation failures with
+a copy-link recovery action. Sharing also lists this computer's network adapters
+so the right one can be chosen when there are several, and lets a church with more
+than one stage screen pick which screen the link is for.
+
+The same guard now covers the QR code in Outputs -> Screens, which previously could
+produce a code for `http://localhost:8032/...` — an address that names whichever
+device scans it. The output URL itself is unchanged and still copyable, because
+that address is correct for OBS running on this same computer; only the QR code,
+which exists to be photographed by a second device, is withheld and explained.
+
+The preacher's screen now reports that it is working. Every other output screen
+has told Relay every two seconds that it is still painting; the stage page never
+did, so a phone or tablet that was set up correctly and showing the reading
+perfectly was described on the operator's console as a screen that had never
+painted, alongside advice to fix a problem it did not have.
+
+Controls on the preacher's phone now give up after six seconds instead of
+waiting for ever. Previously a request that never came back left every button on
+that panel disabled for the rest of the service, with a page reload as the only
+way out. And when the phone cannot reach Relay, it now says so, rather than
+saying "No next verse" — which is what Relay says when a reading has genuinely
+ended, and which could appear over a wall that had in fact just advanced.
+
+The preacher's screen now shows Relay's time, not the phone's. A countdown is
+sent as the moment it ends, and the phone worked out the minutes and seconds
+itself — so a tablet whose clock was a minute out showed a minute of error on
+the figure a sermon is paced against. The phone now takes the time from Relay.
+It also notices when Relay has stopped answering and says "not answering"
+instead of showing a live indicator over frozen content, which a sleeping or
+roaming phone could previously do for the rest of a service.
+
+A phone that has been asleep now reconnects the moment you pick it up, rather
+than on the next retry, and a phone left alone during a long network outage
+stops retrying every second and a half for the whole service. When Relay has
+stopped answering, the stage screen says for how long, because "not answering"
+reads the same after four seconds as after ten minutes.
+
+A sermon timer that has run over can now be held. Until now the only things an
+operator could do to a clock past zero were stop it, which throws away how far
+over it is, or add five minutes, which re-aims it — neither of which is "note
+where we got to". The preacher's screen has always been able to show a held
+timer; nothing could put one into that state. Holding freezes the figure being
+read, including past zero, and letting go carries on from there. It touches no
+congregation screen, and a countdown in front of a room still cannot show a
+negative.
+
+Sermon timers gained Reset, which puts a clock back to the length it was started
+at. Doing that by hand meant stopping the timer and starting a new one, which
+also threw away its name, its warning setting and its link to the service plan.
+Reset keeps all of those, and leaves a held timer held.
+
+Countdowns can now count down to a time of day. Until now every timer in Relay
+was a length — "twenty minutes" — so "the service starts at 10:30" meant working
+out the minutes in your head, and the screen went on counting confidently once
+the service slipped. Both the congregation countdown and the preacher's Stage
+Timer accept a clock time now; leave the field empty and the length beside it
+works exactly as before.
+
+If the time has already gone, the clock starts counting up from it rather than
+jumping to tomorrow, so a mistyped time is obvious straight away instead of
+showing 23 hours and something.
+
+The desk can now decide what a preacher's screen shows. Until now those choices
+lived on the device itself, so the operator could not set them, could not see
+them, and a tablet reset lost the arrangement. Outputs now offers a stage layout
+per stage screen, with three to start from: Preacher, Confidence monitor and
+Timer focus.
+
+Screens you have not given a layout to are left exactly as they are, set from
+the device as before — nothing is migrated and nothing is overwritten. Clearing
+a screen's layout hands it back to the device rather than resetting it.
+
+Stage layouts can be created and edited, not only chosen. Outputs has a Stage
+layouts section: name a layout, pick what it shows, and assign it to a stage
+screen. Changing the switches does not affect any screen until you press Save,
+and the editor says when there is something unsaved. A layout a screen is
+wearing cannot be deleted until that screen has been given a different one, and
+the layouts Relay ships with cannot be deleted at all — they would come back the
+next time Relay started, so they can be renamed and changed instead.
+
+A cue in the service plan can name the screens it is for. Until now every cue
+went to every screen, so a notice landed on the preacher's tablet, a lobby TV
+kept showing a countdown after the service had started, and a stream channel
+took words it was not meant to carry. Each cue in the Planner now has a
+**Screens** row; leave it alone and the cue goes everywhere, exactly as before.
+
+A screen a cue does not name keeps showing whatever it already had. Targeting
+narrows what a cue reaches — it can never blank a screen — and **Clear all
+screens** and **Blackout** still reach everything, always.
+
+Physical phone and tablet scanning remains to be verified.
+
 ### Lower thirds had nothing behind the words
 
 A lower third is the caption bar Relay puts over a live camera on the stream. All of

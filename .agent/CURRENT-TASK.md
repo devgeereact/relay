@@ -2,34 +2,34 @@
 
 ## Outcome
 
-Adopt GEE OS 0.5.0 locally without replacing existing project knowledge or changing application behaviour.
+Review Relay's stage display, timers, outputs and preacher phone/tablet connection against ProPresenter 7's documented behaviour. Produce an implementation plan and begin the local connection safeguards.
 
 ## Scope
 
-- Add missing agent-neutral routing and MCP contracts.
-- Preserve existing `AGENTS.md`, `CLAUDE.md`, source code, documentation and untracked work.
-- Record a project-specific plan for later knowledge modularisation.
+- Review the existing implementation and recorded decisions.
+- Produce `docs/superpowers/plans/2026-09-19-stage-timers-mobile.md` with findings, phases and acceptance checks.
+- Repair unavailable mobile links and stage QR failure handling locally.
+- Include overtime-capable Pause/Resume and operator-saved stage layouts in the plan, as requested by the user.
+- Preserve unrelated work and congregation/rehearsal safety rules.
 
 ## Outside scope
 
-- Feature or defect work.
-- Dependency changes.
-- File deletion or renaming.
-- Git commits, remote synchronisation and pushes.
-- Deployment or external-system mutation.
+- Cloud features, new authentication, NDI or native SDI.
+- Remote synchronisation, publishing, merging or deployment.
+- Claiming physical-phone or projector success from source or automated tests.
 
 ## Mode and workflow
 
 - Primary mode: Existing Application.
-- Workflow: Project Recovery for documentation state, then Change Safety for later edits.
+- Workflow: Change Safety.
 
 ## Evidence
 
-- Before and after `git status`.
-- Added-file inventory.
-- YAML and link checks.
-- Confirmation that existing dirty files are unchanged.
+- Review findings tied to source symbols and official references.
+- URL and clock arithmetic reproduction; regression tests checked against original code.
+- Frontend/Rust tests, production web build, formatting and lint checks.
+- Explicit separation of automated evidence and physical-device checks still required.
 
 ## Completion
 
-The local project discovers the shared GEE OS, all original project files remain intact, and remaining modularisation work is recorded honestly.
+The review and phased plan are written and the first safeguards are verified locally. The larger timer/layout upgrade remains planned. See the plan for evidence, remaining work and the next slice: address refresh and selecting the intended stage channel.

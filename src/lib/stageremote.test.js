@@ -17,6 +17,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as svelteRuntime from 'svelte';
 import { tick } from 'svelte';
 import { stageRemoteUrl } from './channelroles.js';
+const qr = vi.hoisted(() => ({ toDataURL: vi.fn() }));
+vi.mock('qrcode', () => ({ default: qr }));
 
 describe('stageRemoteUrl — the address, and what it does when nothing is a stage', () => {
   const SCREENS = [
@@ -41,6 +43,12 @@ describe('stageRemoteUrl — the address, and what it does when nothing is a sta
     expect(stageRemoteUrl('10.0.0.5', two).others).toEqual(['Confidence monitor']);
   });
 
+  it('addresses the chosen stage and refuses a removed selection rather than choosing another', () => {
+    const two = [...SCREENS, { id: 9, name: 'Second tablet', role: 'stage' }];
+    expect(stageRemoteUrl('10.0.0.5', two, 9).url).toBe('http://10.0.0.5:8032/stage.html?channel=9');
+    expect(stageRemoteUrl('10.0.0.5', SCREENS, 9).url).toBeNull();
+  });
+
   it('answers with NO url when no screen is a stage, rather than a bare page', () => {
     // The refusal that matters. A bare `stage.html` still renders the reading, so
     // an address that "works" is exactly the shape that would be handed out and
@@ -57,6 +65,12 @@ describe('stageRemoteUrl — the address, and what it does when nothing is a sta
     // the caller has the list to tell them apart.
     expect(stageRemoteUrl('192.168.1.42', []).url).toBeNull();
     expect(stageRemoteUrl('192.168.1.42', null).url).toBeNull();
+  });
+
+  it.each([null, undefined, '', 'localhost', '127.0.0.1', '0.0.0.0', '::1'])('never hands a phone an unavailable or loopback address: %s', (address) => {
+    const remote = stageRemoteUrl(address, SCREENS);
+    expect(remote.url).toBeNull();
+    expect(remote.channel.id).toBe(2);
   });
 });
 
@@ -79,8 +93,15 @@ const itMounted = LIFECYCLE_LIVE ? it : it.skip;
 let host;
 let app;
 let screens;
+let lanAddress;
+let interfaceAddresses;
+let networkFailure;
 
 beforeEach(() => {
+  lanAddress = '192.168.1.42';
+  interfaceAddresses = [];
+  networkFailure = false;
+  qr.toDataURL.mockReset().mockResolvedValue('data:image/png;base64,cXI=');
   screens = [
     { id: 1, name: 'Main screen', render_target: 'native_window', template_id: 7, display_target: null, status: 'offline', role: 'main' },
     { id: 2, name: 'Stage display', render_target: 'network_client', template_id: null, display_target: null, status: 'offline', role: 'stage' },
@@ -95,7 +116,9 @@ beforeEach(() => {
       case 'list_monitors':
         return Promise.resolve([]);
       case 'local_ip':
-        return Promise.resolve('192.168.1.42');
+        return Promise.resolve(lanAddress);
+      case 'network_addresses':
+        return networkFailure ? Promise.reject(new Error('interface read failed')) : Promise.resolve(interfaceAddresses);
       case 'channel_status':
         return Promise.resolve([]);
       default:
@@ -138,6 +161,85 @@ async function sharing() {
 }
 
 describe('Outputs → Sharing prints the address the preacher can actually be sent to', () => {
+  itMounted('selects the second stage and replaces its QR and copied link together', async () => {
+    screens.push({ ...screens[1], id: 9, name: 'Second tablet' });
+    const copy = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: copy } });
+    const el = await sharing();
+    [...el.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Show QR').click();
+    await settle();
+    const select = el.querySelector('#stage-device');
+    select.value = '9'; select.dispatchEvent(new Event('change')); await settle();
+    expect(el.querySelector('.ch-stage-qr')).toBeNull();
+    expect(el.textContent).toContain('stage.html?channel=9');
+    [...el.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Copy link').click();
+    await settle();
+    expect(copy).toHaveBeenCalledWith('http://192.168.1.42:8032/stage.html?channel=9');
+    [...el.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Show QR').click();
+    await settle();
+    expect(qr.toDataURL).toHaveBeenLastCalledWith('http://192.168.1.42:8032/stage.html?channel=9', expect.any(Object));
+  });
+
+  itMounted('uses an interface on an offline LAN and keeps a chosen address through refresh', async () => {
+    lanAddress = null;
+    interfaceAddresses = [{ interface: 'Ethernet', address: '10.0.0.8' }, { interface: 'Wi-Fi', address: '192.168.1.42' }];
+    const el = await sharing();
+    expect(el.textContent).toContain('http://10.0.0.8:8032/stage.html?channel=2');
+    const select = el.querySelector('#stage-network');
+    select.value = '192.168.1.42'; select.dispatchEvent(new Event('change')); await settle();
+    lanAddress = '10.0.0.8';
+    const refresh = () => [...el.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Refresh addresses').click();
+    refresh(); await settle();
+    expect(el.textContent).toContain('http://192.168.1.42:8032/stage.html?channel=2');
+    interfaceAddresses = [interfaceAddresses[0]];
+    refresh(); await settle();
+    expect(el.textContent).not.toContain('http://10.0.0.8:8032/stage.html');
+    expect(el.textContent).toContain('could not find a local network address');
+  });
+
+  itMounted('invalidates an old QR when refreshing the address and reports a failed refresh', async () => {
+    const el = await sharing();
+    [...el.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Show QR').click(); await settle();
+    lanAddress = '10.0.0.9';
+    const refresh = () => [...el.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Refresh addresses').click();
+    refresh(); await settle();
+    expect(el.querySelector('.ch-stage-qr')).toBeNull();
+    expect(el.textContent).toContain('http://10.0.0.9:8032/stage.html?channel=2');
+    networkFailure = true;
+    refresh(); await settle();
+    expect(el.textContent).toContain('Could not refresh local network addresses');
+    expect(el.textContent).not.toContain('http://10.0.0.9:8032/stage.html');
+  });
+
+  itMounted('explains a missing network without offering a phone a localhost link', async () => {
+    lanAddress = null;
+    const el = await sharing();
+    expect(el.textContent).toContain('could not find a local network address');
+    expect(el.textContent).not.toContain('http://localhost:8032/stage.html');
+    expect(el.textContent).not.toContain('No screen is set as a stage display');
+    expect([...el.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Show QR')).toBe(false);
+  });
+
+  itMounted('renders the stage QR at its generated size with a four-module quiet zone', async () => {
+    const el = await sharing();
+    [...el.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Show QR').click();
+    await settle();
+    expect(qr.toDataURL).toHaveBeenCalledWith('http://192.168.1.42:8032/stage.html?channel=2', expect.objectContaining({ margin: 4, width: 240 }));
+    const img = el.querySelector('.ch-stage-qr');
+    expect(img?.width).toBe(240);
+    expect(img?.height).toBe(240);
+  });
+
+  itMounted('reports a QR generation failure beside the available copy-link action', async () => {
+    qr.toDataURL.mockRejectedValue(new Error('Canvas unavailable'));
+    const el = await sharing();
+    [...el.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Show QR').click();
+    await settle();
+    expect(el.querySelector('[role="status"]')?.textContent).toContain('Could not create the QR code');
+    expect(el.querySelector('.ch-stage-qr')).toBeNull();
+    expect([...el.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Copy link')).toBe(true);
+  });
+
   itMounted('prints the channel-keyed address', async () => {
     const el = await sharing();
     expect(el.textContent).toContain('http://192.168.1.42:8032/stage.html?channel=2');
@@ -151,5 +253,70 @@ describe('Outputs → Sharing prints the address the preacher can actually be se
     const el = await sharing();
     expect(el.textContent).not.toContain('stage.html?channel=');
     expect(el.textContent).toContain('No screen is set as a stage display');
+  });
+});
+
+// ── AND THE SAME GUARANTEE ON THE OTHER DOOR ────────────────────────────────
+//
+// `showStageQr` refuses a loopback address because, scanned on a phone,
+// `localhost` names the phone. The Screens inspector's **Show QR** is the same
+// affordance for the same reason and had no such guard: `obsUrl` is built from
+// the same `lanIp`, which still defaults to `'localhost'` in three branches of
+// `refreshNetwork`. That is the "guarantee kept on one door" shape this
+// repository has now hit five times — and it was reintroduced by the very
+// change that fixed the stage door.
+//
+// The fix is deliberately NOT to blank the output URL. A loopback output
+// address is genuinely correct for OBS running on this same computer, which is
+// the common case for that link. What cannot be true is a QR CODE of it: a QR
+// exists to be photographed by a second device. So the URL and Copy URL stay,
+// and the QR refuses and says why.
+describe('the general-output QR is a second device by definition, so it refuses a loopback host', () => {
+  async function screensInspector() {
+    const Channels = (await import('./views/Channels.svelte')).default;
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    app = new Channels({ target: host });
+    for (let i = 0; i < 60; i += 1) await settle();
+    const row = [...host.querySelectorAll('button, [role="button"]')].find((b) =>
+      b.textContent.includes('Stage display'),
+    );
+    expect(row, 'no screen row to open the inspector with').toBeTruthy();
+    row.click();
+    for (let i = 0; i < 20; i += 1) await settle();
+    return host;
+  }
+
+  const qrButton = (el) =>
+    [...el.querySelectorAll('button')].find((b) => /^(Show|Hide) QR$/.test(b.textContent.trim()));
+
+  itMounted('will not photograph a localhost output address onto a phone', async () => {
+    lanAddress = null;              // no route to 8.8.8.8
+    interfaceAddresses = [];        // and no usable interface either
+    const el = await screensInspector();
+    qrButton(el)?.click();
+    await settle();
+    expect(qr.toDataURL).not.toHaveBeenCalled();
+    expect(el.querySelector('.ch-qr-img')).toBeNull();
+    expect(el.textContent).toContain('local network address');
+  });
+
+  itMounted('still offers the address itself, because OBS on this computer is a real caller', async () => {
+    lanAddress = null;
+    interfaceAddresses = [];
+    const el = await screensInspector();
+    expect([...el.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Copy URL')).toBe(true);
+    expect(el.textContent).toContain('localhost:8032/output.html');
+  });
+
+  itMounted('photographs a real LAN address exactly as the stage door does', async () => {
+    lanAddress = '192.168.1.42';
+    const el = await screensInspector();
+    qrButton(el)?.click();
+    await settle();
+    expect(qr.toDataURL).toHaveBeenCalledWith(
+      expect.stringContaining('http://192.168.1.42:8032/output.html?channel=2'),
+      expect.objectContaining({ margin: 4, width: 240 }),
+    );
   });
 });

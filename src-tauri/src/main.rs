@@ -224,6 +224,7 @@ fn main() {
             let kiosk_screen_tpls = kiosk.channel_templates_handle();
             let kiosk_shows = kiosk.channel_shows_handle();
             let kiosk_last = kiosk.last_screen_handle();
+            let kiosk_last_by_ch = kiosk.last_screen_by_channel_handle();
             let kiosk_last_x = kiosk.last_transition_handle();
             let kiosk_last_t = kiosk.last_timers_handle();
             let kiosk_last_bg = kiosk.last_background_handle();
@@ -395,6 +396,7 @@ fn main() {
                 kiosk_screen_tpls,
                 kiosk_shows,
                 kiosk_last,
+                kiosk_last_by_ch,
                 kiosk_last_x,
                 kiosk_last_t,
                 kiosk_last_bg,
@@ -477,6 +479,7 @@ fn main() {
             set_plan_section,
             set_plan_duration,
             set_plan_timer,
+            set_plan_channels,
             set_plan_template,
             list_songs,
             search_songs,
@@ -487,6 +490,11 @@ fn main() {
             adjust_countdown,
             start_timer,
             adjust_timer,
+            reset_timer,
+            list_stage_layouts,
+            set_channel_stage_layout,
+            upsert_stage_layout,
+            delete_stage_layout,
             stop_timer,
             list_timers,
             show_timer,
@@ -525,6 +533,7 @@ fn main() {
             migration_status,
             list_audio_devices,
             local_ip,
+            network_addresses,
             start_capture,
             stop_capture,
             stt_status,
@@ -681,6 +690,10 @@ fn resolve_fire(
     stage_note: Option<String>,
     matched_text: Option<String>,
     cue_template_id: Option<i64>,
+    // WHICH SCREENS (RG-161). `None` is every screen, which every path but a
+    // planned cue passes: a detected verse and a manual fire have nowhere
+    // anybody could have said otherwise.
+    channels: Option<Vec<i64>>,
 ) -> Fire {
     let looked = db::lookup_verse(conn, &r.book, r.chapter, r.verse)
         .ok()
@@ -701,6 +714,7 @@ fn resolve_fire(
         confidence,
         method,
         status,
+        channels,
         stage_note,
         next_reference: None,
         next_text: None,
@@ -870,6 +884,9 @@ fn fire_manual<R: tauri::Runtime>(
     update: PassageUpdate,
     stage_note: Option<String>,
     cue_template_id: Option<i64>,
+    // WHICH SCREENS (RG-161). Only a planned cue has an answer; every other
+    // operator path passes `None`, which is every screen.
+    cue_channels: Option<Vec<i64>>,
 ) -> bool {
     let db = handle.state::<Db>();
     let ctx = handle.state::<Context>();
@@ -889,6 +906,7 @@ fn fire_manual<R: tauri::Runtime>(
             // the AI's guesses.
             None,
             cue_template_id,
+            cue_channels,
         );
         // Not in the corpus → leave the screen exactly as it is. Better to show
         // the previous verse than to blank the wall mid-sentence. Same rule the
@@ -1345,8 +1363,9 @@ fn emit_detections<R: tauri::Runtime>(
             };
             let end = passage_end(&conn, &c);
             // Auto-detection has no plan cue behind it — content-type default.
-            let mut fire =
-                resolve_fire(&conn, c.r, c.conf, c.method, status, None, c.matched, None);
+            let mut fire = resolve_fire(
+                &conn, c.r, c.conf, c.method, status, None, c.matched, None, None,
+            );
             // Which decode pass put this verse here. Rides to the console and to
             // every output so the last leg — pixels on a projector — can be timed
             // rather than assumed.
@@ -1492,7 +1511,7 @@ fn handle_nav<R: tauri::Runtime>(
     let reference = Fire::key_for(&r);
     // Advance keeps the staged passage span, so a range/chapter walk stays bounded.
     // A nav step walks a passage, not a plan cue — content-type default.
-    if fire_manual(handle, r, 1.0, PassageUpdate::Advance, None, None) {
+    if fire_manual(handle, r, 1.0, PassageUpdate::Advance, None, None, None) {
         Ok(NavResult::Fired { reference })
     } else {
         Ok(NavResult::NotInLibrary { reference })
@@ -1610,7 +1629,7 @@ fn passage_nav_outcome<R: tauri::Runtime>(
     };
     let reference = Fire::key_for(&target);
     Some(Ok(
-        if fire_manual(handle, target, 1.0, PassageUpdate::Jump, None, None) {
+        if fire_manual(handle, target, 1.0, PassageUpdate::Jump, None, None, None) {
             NavResult::Fired { reference }
         } else {
             // The verse parsed and is not in the corpus. Firing it would blank the
@@ -2194,6 +2213,41 @@ fn remote_api<R: tauri::Runtime>(
     };
 
     ok(match route_name {
+        // WHICH LAYOUT EACH STAGE SCREEN WEARS — `{"2":{"reading":true,…}}`.
+        //
+        // READ over HTTP rather than replayed on the WebSocket hello, and that
+        // is a deliberate trade with a cost worth naming. Every other
+        // configuration map (roles, looks, shows) is a retained hub slot
+        // replayed on hello, because the pages that need those have no other
+        // way to ask. `stage.html` is the ONLY consumer of this one and it
+        // already has this HTTP control plane, so the alternative was an
+        // eighteenth parameter on `run_kiosk_server` and twenty-five test call
+        // sites for a fact one page reads.
+        //
+        // The cost: initial state and live updates arrive by two different
+        // paths — this route on connect, and a `stage_zones` broadcast when an
+        // operator changes an assignment. They are the same two paths this page
+        // already uses for its control panel (search over HTTP, content over
+        // the socket), and a failed read falls back to the device's own zones
+        // rather than to a blank screen.
+        "stage_zones" => {
+            let db = app.state::<Db>();
+            let blob =
+                db.0.lock()
+                    .ok()
+                    .and_then(|conn| db::stage_zones_json(&conn).ok())
+                    .unwrap_or_else(|| "{}".to_string());
+            // THE WHOLE OBJECT, not a fragment. Every arm of this match builds
+            // its own complete reply — `ok` sets the body verbatim and wraps
+            // nothing. This returned `"zones":{…}` with no braces, which is not
+            // JSON at all: `Stage.svelte`'s `api()` calls `r.json()`, that
+            // throws, `loadStageZones` swallows it by design, and the page
+            // falls back to the device's own zones. An assigned stage layout
+            // would have silently never applied on a real device while every
+            // test passed, because the tests mock `fetch`. Found by running the
+            // packaged app and curling the route.
+            format!(r#"{{"ok":true,"zones":{blob}}}"#)
+        }
         "search" => {
             let q = param("q").unwrap_or_default();
             let rows = {
@@ -2231,7 +2285,9 @@ fn remote_api<R: tauri::Runtime>(
         "fire" => match param("ref") {
             None => "{\"ok\":false,\"error\":\"no reference\"}".to_string(),
             Some(reference) => {
-                match manual_fire(app.clone(), app.state::<Db>(), reference, None, None) {
+                // The preacher's phone fires at every screen: it is a person asking
+                // for a verse, not a plan cue that named screens.
+                match manual_fire(app.clone(), app.state::<Db>(), reference, None, None, None) {
                     Ok(()) => format!("{{\"ok\":true,{}}}", live_json(app)),
                     Err(e) => format!("{{\"ok\":false,\"error\":{}}}", json_str(&e.to_string())),
                 }
@@ -2494,6 +2550,26 @@ fn set_plan_duration(db: tauri::State<'_, Db>, id: i64, seconds: i64) -> error::
 fn set_plan_timer(db: tauri::State<'_, Db>, id: i64, minutes: Option<i64>) -> error::Result<()> {
     let conn = db.0.lock()?;
     db::set_plan_timer(&conn, id, minutes).map_err(Into::into)
+}
+
+/// Planner: which screens this cue is for, or every screen (RG-161).
+///
+/// `None` clears the targeting and means EVERY screen — what every cue written
+/// before this existed has, and what a cue goes back to. An empty list reaches
+/// NO screen and is deliberately not folded into `None`: those are opposite
+/// instructions, and collapsing them would make the emptier one unsayable.
+///
+/// It STORES and it fires nothing, like `set_plan_timer` beside it: the Planner
+/// may not reach an output (`plannerbuildonly.test.js`), so this is a fact
+/// about the plan and Live is what acts on it when the cue goes on air.
+#[tauri::command]
+fn set_plan_channels(
+    db: tauri::State<'_, Db>,
+    id: i64,
+    channels: Option<Vec<i64>>,
+) -> error::Result<()> {
+    let conn = db.0.lock()?;
+    db::set_plan_channels(&conn, id, channels).map_err(Into::into)
 }
 
 /// Planner: point a cue at a specific template, or back at the channel default.
@@ -3050,6 +3126,11 @@ fn clean_note(note: Option<String>) -> Option<String> {
 // code, and welded to the concrete desktop handle it could not be driven from
 // `e2e.rs` — which is why the countdown was the one fire path with no end-to-end
 // test while every other take had one.
+// EIGHT ARGUMENTS, AND A STRUCT WOULD BE WORSE HERE. A Tauri command's
+// parameters are the named fields of the IPC payload, so grouping them nests
+// what the frontend sends and what `ipc.test.js` reads — a shape change to
+// every caller in exchange for a lint. Same precedent as `save_song`.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 fn start_countdown<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -3059,6 +3140,7 @@ fn start_countdown<R: tauri::Runtime>(
     done_msg: String,
     template_id: Option<i64>,
     warn_ms: Option<i64>,
+    until_ms: Option<i64>,
 ) -> error::Result<()> {
     let mins = if minutes.is_finite() && minutes > 0.0 {
         minutes
@@ -3069,7 +3151,17 @@ fn start_countdown<R: tauri::Runtime>(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
-    let target = now_ms + (mins * 60_000.0) as i64;
+    // AN APPOINTMENT WINS OVER A LENGTH. `until_ms` is an absolute instant the
+    // caller worked out from a clock time, because turning "10:30" into an
+    // instant needs the machine's timezone and DST rules and `std` has neither.
+    // A time already gone is kept as it is rather than rolled to tomorrow: the
+    // countdown starts over, which is what an operator who typed a time that has
+    // passed needs to see. 23:55:00 on a lobby screen would hide it.
+    let until_ms = until_ms.filter(|at| *at > 0);
+    let target = match until_ms {
+        Some(at) => at,
+        None => now_ms + (mins * 60_000.0) as i64,
+    };
 
     // THE REGISTRY IS WHERE THE COUNTDOWN NOW LIVES, and the four wire fields below
     // are its projection rather than a second copy of it. A second `Both` timer over
@@ -3100,6 +3192,14 @@ fn start_countdown<R: tauri::Runtime>(
             // None is absent, never zero — see `BothProjection::countdown_warn_ms`.
             warn_ms: warn_ms.filter(|n| *n > 0),
             scope: timers::Scope::Both,
+            // What Reset would go back to. A congregation countdown has no
+            // Reset control today — the dock's Reset is the TOOL's, and puts
+            // the length field back rather than the running clock — but the
+            // registry row is the same shape either way, and a field filled by
+            // one creator and left at zero by the other is how the two come to
+            // disagree about the same timer.
+            configured_ms: (mins * 60_000.0) as i64,
+            until_ms,
             plan_item_id: None,
             // The mode in force at this instant, stamped once and never rewritten
             // (RG-150). Leaving a rehearsal happens to clear the screens, which
@@ -3292,6 +3392,11 @@ struct TimerView {
 /// guessed at: guessing `Both` would put a programme timer in front of a
 /// congregation, which is the one mistake that cannot be taken back quietly.
 // GENERIC OVER THE RUNTIME (rule 24) — it is timer-path code and `e2e.rs` drives it.
+// EIGHT ARGUMENTS, AND A STRUCT WOULD BE WORSE HERE. A Tauri command's
+// parameters are the named fields of the IPC payload, so grouping them nests
+// what the frontend sends and what `ipc.test.js` reads — a shape change to
+// every caller in exchange for a lint. Same precedent as `save_song`.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 fn start_timer<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -3301,6 +3406,7 @@ fn start_timer<R: tauri::Runtime>(
     scope: String,
     warn_ms: Option<i64>,
     plan_item_id: Option<i64>,
+    until_ms: Option<i64>,
 ) -> error::Result<i64> {
     let scope = match scope.trim().to_ascii_lowercase().as_str() {
         "both" => timers::Scope::Both,
@@ -3334,11 +3440,22 @@ fn start_timer<R: tauri::Runtime>(
         id: 0, // assigned by the registry
         label: label.trim().to_string(),
         done_msg: clean_note(Some(done_msg)).unwrap_or_default(),
-        target_ms: now_ms + (mins * 60_000.0) as i64,
+        target_ms: match until_ms.filter(|at| *at > 0) {
+            Some(at) => at,
+            None => now_ms + (mins * 60_000.0) as i64,
+        },
         from_ms: now_ms,
         paused_ms: None,
         warn_ms,
         scope,
+        // WHAT RESET GOES BACK TO. Stated here rather than derived later: a
+        // re-aim moves `target_ms` and leaves `from_ms`, so the span stops
+        // being the length anybody chose the first time `+5` is pressed.
+        configured_ms: (mins * 60_000.0) as i64,
+        // See `start_countdown`: an appointment is an instant the caller worked
+        // out where local time is known, and Reset goes back to it rather than
+        // to a length.
+        until_ms: until_ms.filter(|at| *at > 0),
         plan_item_id,
         // The mode in force at this instant — see `start_countdown`, and
         // `timers::Timer::started_in_rehearsal` for why it is a property of the
@@ -3360,6 +3477,174 @@ fn start_timer<R: tauri::Runtime>(
 /// running", which is what the dock's transport means. This one names the timer, so
 /// a console showing several can move the one under the operator's finger.
 ///
+/// The stage layouts an operator can choose between. Global, by name.
+#[tauri::command]
+fn list_stage_layouts(db: tauri::State<'_, Db>) -> error::Result<Vec<db::StageLayout>> {
+    let conn = db.0.lock().map_err(|_| error::Error::Busy {
+        message: "The database is busy. Try again.".into(),
+    })?;
+    Ok(db::list_stage_layouts(&conn)?)
+}
+
+/// Turn a layout refusal into a sentence a volunteer can act on.
+///
+/// Every arm names WHAT to do next, because a refusal an operator cannot act on
+/// is a dead end in the middle of setting a service up.
+fn layout_refusal(r: db::LayoutRefusal) -> error::Error {
+    match r {
+        db::LayoutRefusal::NoName => {
+            error::Error::refused("A stage layout needs a name.".to_string())
+        }
+        db::LayoutRefusal::NameTaken => error::Error::refused(
+            "There is already a stage layout with that name. Choose another.".to_string(),
+        ),
+        db::LayoutRefusal::BadZones => error::Error::refused(
+            "That layout does not name any zones, so nothing would change.".to_string(),
+        ),
+        db::LayoutRefusal::Seeded => error::Error::refused(
+            "This is one of the layouts Relay ships with, so it cannot be removed — \
+             it would come back the next time Relay starts. Rename it and change \
+             what it shows instead."
+                .to_string(),
+        ),
+        db::LayoutRefusal::InUse(names) => error::Error::refused(format!(
+            "{} {} using this layout. Give {} a different one first.",
+            names.join(", "),
+            if names.len() == 1 { "is" } else { "are" },
+            if names.len() == 1 { "it" } else { "them" },
+        )),
+        db::LayoutRefusal::NotFound => {
+            error::Error::not_found("That stage layout is no longer there.".to_string())
+        }
+    }
+}
+
+/// Create a stage layout, or rename and re-zone one that exists.
+#[tauri::command]
+fn upsert_stage_layout<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    id: Option<i64>,
+    name: String,
+    zones: serde_json::Value,
+) -> error::Result<i64> {
+    let saved = {
+        let conn = db.0.lock().map_err(|_| error::Error::Busy {
+            message: "The database is busy. Try again.".into(),
+        })?;
+        db::upsert_stage_layout(&conn, id, &name, &zones)?
+    };
+    let id = saved.map_err(layout_refusal)?;
+    // An EDIT changes what screens already wearing it show, so the screens are
+    // told. A create changes nothing until it is assigned, and publishing then
+    // is a no-op — one call either way rather than a branch that can be wrong.
+    publish_stage_zones(&app, &db);
+    Ok(id)
+}
+
+/// Remove a stage layout, unless doing so would be silently wrong.
+#[tauri::command]
+fn delete_stage_layout<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    id: i64,
+) -> error::Result<()> {
+    {
+        let conn = db.0.lock().map_err(|_| error::Error::Busy {
+            message: "The database is busy. Try again.".into(),
+        })?;
+        db::delete_stage_layout(&conn, id)?.map_err(layout_refusal)?;
+    }
+    publish_stage_zones(&app, &db);
+    Ok(())
+}
+
+/// Point one stage screen at one layout, or at none.
+///
+/// `None` is the way back, and it is a real answer rather than a reset: the
+/// screen returns to whatever zones the DEVICE has in its own `localStorage`,
+/// which is the arrangement a church may already be using. That is what stops
+/// this feature silently erasing one.
+///
+/// It publishes the whole map, the way every other configuration map is
+/// published — a delta would leave a screen that missed one frame wrong about
+/// itself for the rest of a service with no way to find out.
+#[tauri::command]
+fn set_channel_stage_layout<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    db: tauri::State<'_, Db>,
+    channel_id: i64,
+    layout_id: Option<i64>,
+) -> error::Result<()> {
+    {
+        let conn = db.0.lock().map_err(|_| error::Error::Busy {
+            message: "The database is busy. Try again.".into(),
+        })?;
+        db::set_channel_stage_layout(&conn, channel_id, layout_id)?;
+    }
+    publish_stage_zones(&app, &db);
+    Ok(())
+}
+
+/// Tell every stage screen which layout it wears now.
+///
+/// Broadcast only — there is no retained slot and no hello replay for this one.
+/// `stage.html` reads its initial state from `GET /api/stage_zones` on connect,
+/// because it is the only consumer and the only page with that HTTP plane; see
+/// the route for the trade and its cost.
+fn publish_stage_zones<R: tauri::Runtime>(app: &tauri::AppHandle<R>, db: &tauri::State<'_, Db>) {
+    let blob =
+        db.0.lock()
+            .ok()
+            .and_then(|conn| db::stage_zones_json(&conn).ok())
+            .unwrap_or_else(|| "{}".to_string());
+    if let Some(hub) = app.try_state::<channels::KioskHub>() {
+        hub.publish(channels::stage_zones_frame(&blob));
+    }
+}
+
+/// PUT A TIMER BACK TO THE LENGTH IT WAS STARTED AT.
+///
+/// The third transport verb. `+5` adds to what is there and Stop takes the timer
+/// away; neither is "start that again", and doing it by hand — Stop then Start —
+/// loses the label, the chosen warning threshold and the cue binding along with
+/// the figure.
+///
+/// It answers HOW LONG, never running-or-not: a held timer is reset where it
+/// stands and stays held. Resuming as a side effect would start a clock nobody
+/// asked to start, which on a stage is a figure moving under somebody
+/// mid-sentence.
+///
+/// Same publication rule as `adjust_timer`: it puts nothing on a screen, and a
+/// `Both` timer that IS on the screens has the wall brought into line rather
+/// than re-fired — the registry and the wall may never disagree about the same
+/// countdown.
+#[tauri::command]
+fn reset_timer<R: tauri::Runtime>(app: tauri::AppHandle<R>, timer_id: i64) -> error::Result<()> {
+    let scope = app
+        .state::<timers::TimerRegistry>()
+        .get(timer_id)
+        .map(|t| t.scope)
+        .unwrap_or(timers::Scope::Both);
+    let back = app
+        .state::<timers::TimerRegistry>()
+        .reset(timer_id, cd_now_ms())
+        .map_err(|e| timer_refusal(e, scope))?;
+
+    if back.scope == timers::Scope::Both {
+        if let Some(mut content) = channels::live_content(&app).filter(is_countdown_content) {
+            let shown = timers::project_both(&back);
+            content.countdown_to = Some(shown.countdown_to);
+            content.countdown_from = Some(shown.countdown_from);
+            content.countdown_paused_ms = shown.countdown_paused_ms;
+            content.trace_id = None;
+            broadcast_with_clock(&app, content)?;
+        }
+    }
+    channels::publish_timers(&app);
+    Ok(())
+}
+
 /// Like `adjust_countdown`, it publishes nothing: changing a number on a timer that
 /// is not on the screens must not put it on them.
 #[tauri::command]
@@ -3524,6 +3809,9 @@ fn countdown_content(
 // GENERIC OVER THE RUNTIME, deliberately (CLAUDE.md §24). Welded to the
 // concrete desktop handle, this path could not be driven from `e2e.rs` — and
 // the one code that decides what a congregation reads would have no test.
+// EIGHT ARGUMENTS, and a struct would be worse — see `start_countdown`. A
+// Tauri command's parameters are the named fields of the IPC payload.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 fn fire_content<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -3533,6 +3821,8 @@ fn fire_content<R: tauri::Runtime>(
     kind: String,
     stage_note: Option<String>,
     template_id: Option<i64>,
+    // WHICH SCREENS (RG-161). `None` is every screen.
+    channels: Option<Vec<i64>>,
 ) -> error::Result<()> {
     let label = label.trim().to_string();
     let (tid, tjson, tpinned) = {
@@ -3554,6 +3844,7 @@ fn fire_content<R: tauri::Runtime>(
         &app,
         OutputContent {
             kind: Some(kind.clone()),
+            channels,
             reference: projected,
             text: Some(text),
             translation: None,
@@ -4827,6 +5118,12 @@ fn local_ip() -> Option<String> {
     }
 }
 
+/// Local interface addresses for sharing links. No network requests or settings changes.
+#[tauri::command]
+async fn network_addresses() -> Vec<sysprobe::NetworkAddress> {
+    sysprobe::network_addresses()
+}
+
 /// Start capturing from `device` (default input when None). Each produced chunk
 /// is emitted to the frontend as `audio://chunk` (metadata only). Replaces any
 /// capture already running.
@@ -5175,6 +5472,10 @@ fn confirm_detection<R: tauri::Runtime>(
             PassageUpdate::Note(end),
             None,
             // Confirming an AI suggestion is not a plan cue — scripture default.
+            None,
+            // …and for the same reason it names no screens. Nobody has said
+            // which screens an AI suggestion belongs on; every screen is the
+            // only honest answer.
             None,
         ) {
             // Same wording as `manual_fire`'s, deliberately: it is the same
@@ -6317,6 +6618,9 @@ fn manual_fire<R: tauri::Runtime>(
     reference: String,
     stage_note: Option<String>,
     template_id: Option<i64>,
+    // WHICH SCREENS (RG-161), when a plan cue said so. `None` from the
+    // operator's own reference box, which is every screen.
+    channels: Option<Vec<i64>>,
 ) -> error::Result<()> {
     let m = detection::detect_direct(&reference)
         .into_iter()
@@ -6345,6 +6649,7 @@ fn manual_fire<R: tauri::Runtime>(
         PassageUpdate::Note(end),
         clean_note(stage_note),
         template_id,
+        channels,
     ) {
         // Parsed fine, but that verse doesn't exist (e.g. "John 3:99"). Say so.
         // This used to broadcast an EMPTY verse instead — blanking the wall
@@ -8302,6 +8607,8 @@ mod named_translation_gap_tests {
     /// A fire carrying a translation, shaped the way `resolve_fire` leaves one.
     fn fire_showing(translation: Option<&str>) -> pipeline::Fire {
         pipeline::Fire {
+            // A fixture names no screens: every screen.
+            channels: None,
             key: "Hebrews 11:19".into(),
             reference: detection::VerseRef {
                 book: "Hebrews".into(),

@@ -94,6 +94,29 @@ export function roleOf(roles, channelId) {
 }
 
 /**
+ * Can this host be handed to a SECOND DEVICE?
+ *
+ * Loopback is not a wrong address — it is the right one for OBS running on this
+ * same computer, which is the common caller of the general output URL. It is
+ * only wrong the moment it leaves the machine, because `localhost` scanned on a
+ * phone names the phone. So this asks one narrow question and the callers
+ * decide what to do with the answer: `stageRemoteUrl` withholds the URL (a
+ * stage page's whole purpose is another device), while the Screens inspector
+ * keeps the address and refuses only the QR.
+ *
+ * It lives here, exported and named, because the same regex inlined at two call
+ * sites is how this repository has produced five one-door guarantees.
+ *
+ * @param {unknown} host
+ * @returns {boolean}
+ */
+export function isSharableHost(host) {
+  const address = typeof host === 'string' ? host.trim() : '';
+  if (!address) return false;
+  return !/^(localhost\.?|127(?:\.\d+){3}|0\.0\.0\.0|\[?::1\]?)$/i.test(address);
+}
+
+/**
  * THE ADDRESS AN OPERATOR HANDS THE PREACHER.
  *
  * `stage.html` used to be a page rather than a screen: it said hello with no
@@ -116,14 +139,22 @@ export function roleOf(roles, channelId) {
  *
  * @param {string} host the LAN address of this machine (`local_ip`)
  * @param {Array} channels rows as `list_output_channels` returns them
+ * An unavailable/loopback host also produces no URL, but retains the channel so
+ * the operator is told to check the network rather than create another screen.
  * @returns {{ url: string|null, channel: object|null, others: string[] }}
  */
-export function stageRemoteUrl(host, channels) {
+export function stageRemoteUrl(host, channels, selectedId = null) {
   const stages = (Array.isArray(channels) ? channels : []).filter((c) => c?.role === 'stage');
   if (!stages.length) return { url: null, channel: null, others: [] };
-  const [first, ...rest] = stages;
+  const first = selectedId == null ? stages[0] : stages.find((c) => c.id === Number(selectedId));
+  if (!first) return { url: null, channel: null, others: stages.map((c) => c.name) };
+  const rest = stages.filter((c) => c.id !== first.id);
+  // A loopback address names the PHONE when scanned there. Keep the channel
+  // identity so the desk can distinguish no network from no stage screen.
+  const address = typeof host === 'string' ? host.trim() : '';
+  const usable = isSharableHost(address);
   return {
-    url: `http://${host}:8032/stage.html?channel=${first.id}`,
+    url: usable ? `http://${address}:8032/stage.html?channel=${first.id}` : null,
     channel: first,
     others: rest.map((c) => c.name),
   };

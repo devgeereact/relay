@@ -19,6 +19,7 @@ import {
   dropIndex,
   reorderTo,
   previewState,
+  planChannelsOf,
 } from './plan.js';
 
 const song = (id, ...labels) => ({
@@ -478,5 +479,41 @@ describe('previewState — rule 35, on the cue inspector', () => {
 
   it('no cue at all is not an empty cue', () => {
     expect(previewState(null, false)).toMatchObject({ state: 'none', plate: false, message: '' });
+  });
+});
+
+// ── WHICH SCREENS A CUE IS FOR (RG-161) ────────────────────────────────────
+//
+// `plan_items.channels_json` is read here and nowhere else. The three readings
+// below are not interchangeable and the difference is a screen going blank:
+//
+//   null  → EVERY screen. What every cue written before targeting existed
+//           carries, so an old plan behaves exactly as it always did.
+//   []    → NO screen. A real thing to ask for, and the one that would be lost
+//           if it were folded in with null.
+//   junk  → EVERY screen. Content that silently reaches nothing is worse than
+//           content that reaches more than it had to.
+describe('planChannelsOf', () => {
+  it('reads a list of screens', () => {
+    expect(planChannelsOf('[1,4]')).toEqual([1, 4]);
+  });
+
+  it('answers null for a cue that says nothing, which is every screen', () => {
+    expect(planChannelsOf(null)).toBeNull();
+    expect(planChannelsOf(undefined)).toBeNull();
+  });
+
+  it('keeps an empty list empty, because that is a different instruction', () => {
+    expect(planChannelsOf('[]')).toEqual([]);
+  });
+
+  it('falls back to every screen on anything it cannot read', () => {
+    expect(planChannelsOf('not json')).toBeNull();
+    expect(planChannelsOf('{"a":1}')).toBeNull();
+    expect(planChannelsOf('7')).toBeNull();
+  });
+
+  it('drops entries that are not numbers rather than passing them on', () => {
+    expect(planChannelsOf('[1,"two",null,3]')).toEqual([1, 3]);
   });
 });

@@ -60,6 +60,17 @@ pub struct PlanItem {
     pub section_title: String,
     pub duration_sec: i64,
     pub timer_minutes: Option<i64>,
+    /// WHICH SCREENS THIS CUE IS FOR (RG-161), as a JSON array of channel ids.
+    ///
+    /// `None` is EVERY screen and is the default: a cue that says nothing about
+    /// screens behaves as every cue did before targeting existed. An empty
+    /// array is a cue that reaches NO screen, which is a different thing and a
+    /// real thing to ask for.
+    ///
+    /// A screen this does not name is UNTOUCHED, not cleared — see
+    /// `channels::OutputContent::channels` for why that is the only safe
+    /// reading.
+    pub channels_json: Option<String>,
 }
 
 /// Create the service-plan tables if missing. Idempotent; forward-fills DBs
@@ -90,7 +101,17 @@ pub fn ensure_service_plans(conn: &Connection) -> rusqlite::Result<()> {
     // migration UNBOUND, which is a different fact from "bound to zero minutes".
     // A `NOT NULL DEFAULT 0` here would have silently given every cue in every
     // church's existing plans an answer nobody typed.
-    add_plan_item_column(conn, "timer_minutes", "INTEGER")
+    add_plan_item_column(conn, "timer_minutes", "INTEGER")?;
+    // WHICH SCREENS THIS CUE IS FOR (RG-161). NULL is EVERY screen and is what
+    // every existing cue in every existing plan has — a cue that has never been
+    // told about screens must go on behaving exactly as it did, which is why
+    // there is no default and no back-fill.
+    //
+    // A JSON array of channel ids rather than a join table: the set is small,
+    // it is read whole or not at all, and it has no identity of its own. A
+    // table would also need a row deleted when a screen is, where a stale id in
+    // this list is simply a screen that is not there and reaches nothing.
+    add_plan_item_column(conn, "channels_json", "TEXT")
 }
 
 /// Add a column to `plan_items` only if it is absent.
@@ -184,9 +205,11 @@ pub fn duplicate_plan(
     // duplicating instead of starting empty.
     tx.execute(
         "INSERT INTO plan_items (plan_id, position, cue_type, label, payload_json,
-                                 template_id, section_title, duration_sec, timer_minutes)
+                                 template_id, section_title, duration_sec, timer_minutes,
+                                 channels_json)
          SELECT ?1, position, cue_type, label, payload_json,
-                template_id, section_title, duration_sec, timer_minutes
+                template_id, section_title, duration_sec, timer_minutes,
+                channels_json
            FROM plan_items WHERE plan_id = ?2",
         (new_id, src_id),
     )?;
@@ -207,7 +230,7 @@ pub fn delete_plan(conn: &Connection, id: i64) -> rusqlite::Result<()> {
 pub fn plan_items(conn: &Connection, plan_id: i64) -> rusqlite::Result<Vec<PlanItem>> {
     let mut stmt = conn.prepare(
         "SELECT id, plan_id, position, cue_type, label, payload_json, template_id,
-                section_title, duration_sec, timer_minutes
+                section_title, duration_sec, timer_minutes, channels_json
            FROM plan_items WHERE plan_id = ?1 ORDER BY position, id",
     )?;
     let rows = stmt.query_map([plan_id], |r| {
@@ -222,6 +245,7 @@ pub fn plan_items(conn: &Connection, plan_id: i64) -> rusqlite::Result<Vec<PlanI
             section_title: r.get(7)?,
             duration_sec: r.get(8)?,
             timer_minutes: r.get(9)?,
+            channels_json: r.get(10)?,
         })
     })?;
     rows.collect()
@@ -316,6 +340,25 @@ pub fn set_plan_timer(
     conn.execute(
         "UPDATE plan_items SET timer_minutes = ?1 WHERE id = ?2",
         (minutes, item_id),
+    )?;
+    Ok(())
+}
+
+/// WHICH SCREENS A CUE IS FOR. `None` clears the targeting — every screen.
+///
+/// Stored as JSON so the column holds one fact in one shape. An empty list is
+/// stored as `[]` and is NOT collapsed to NULL: "reaches no screen" and "reaches
+/// every screen" are opposite instructions, and a writer that folded them
+/// together would make the emptier choice unsayable.
+pub fn set_plan_channels(
+    conn: &Connection,
+    item_id: i64,
+    channels: Option<Vec<i64>>,
+) -> rusqlite::Result<()> {
+    let blob = channels.map(|ids| serde_json::Value::from(ids).to_string());
+    conn.execute(
+        "UPDATE plan_items SET channels_json = ?1 WHERE id = ?2",
+        (blob, item_id),
     )?;
     Ok(())
 }
