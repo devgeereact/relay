@@ -73,3 +73,8 @@ backgrounds-originals/
 .playwright-mcp/
 stage-before.json
 stage-after.json
+
+# Local environment files may contain credentials. Keep only the example public.
+.env
+.env.*
+!.env.example
